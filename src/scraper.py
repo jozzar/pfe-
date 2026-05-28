@@ -1,13 +1,19 @@
 """Scraper for MASI historical prices using yfinance.
 
-This script fetches historical data for the MASI index and uploads it to Supabase.
+This script fetches historical data for the MASI index and uploads it to PostgreSQL.
 """
 
 import yfinance as yf
 import pandas as pd
-from db_client import upload_masi_prices, clean_price_frame, DataIngestionError
+import sys
+import os
 
-MASI_TICKER = "MASI.CS"  # Common ticker for MASI index on Yahoo Finance
+# Ensure the root directory is in sys.path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from src.db_client import upload_masi_prices, clean_price_frame, DataIngestionError
+
+MASI_TICKER = "MASI.CS"
 
 def scrape_masi_data(period: str = "max") -> pd.DataFrame:
     """Fetch historical MASI data from Yahoo Finance."""
@@ -16,16 +22,13 @@ def scrape_masi_data(period: str = "max") -> pd.DataFrame:
     df = ticker.history(period=period)
     
     if df.empty:
-        raise DataIngestionError(f"No data found for {MASI_TICKER}. Check the ticker or network connection.")
+        raise DataIngestionError(f"No data found for {MASI_TICKER}. You might be rate-limited by Yahoo Finance. Try again later.")
     
-    # yfinance returns a DataFrame with 'Close' column and a DatetimeIndex
     df = df[["Close"]].copy()
     df.index.name = "date"
     df.rename(columns={"Close": "close"}, inplace=True)
     
     print(f"Successfully fetched {len(df)} records.")
-    print("\nData Preview (First 5 records):")
-    print(df.head())
     return df
 
 def main():
@@ -33,18 +36,17 @@ def main():
         # 1. Scrape data
         raw_data = scrape_masi_data()
         
-        # 2. Clean data using existing logic
+        # 2. Clean data
         clean_df = clean_price_frame(raw_data.reset_index())
         
-        # 3. Upload to Supabase
-        print("\nUploading data to Supabase...")
+        # 3. Upload to Database
+        print("\nUploading data to PostgreSQL...")
         upload_masi_prices(clean_df)
-        print("Upload complete!")
+        print("Upload complete! Database is now initialized.")
         
     except Exception as e:
         print(f"\nError during scraping/uploading: {e}")
-        print("\nNote: If you haven't created the 'masi_prices' table in Supabase yet,")
-        print("please run the SQL command provided in GEMINI.md first.")
+        print("\nNote: Ensure your Docker container is running: docker-compose up -d")
 
 if __name__ == "__main__":
     main()

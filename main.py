@@ -9,8 +9,8 @@ from src.signal_processing import add_hp_fundamental_value
 def main():
     print("--- MASI Fundamental Value Estimation ---")
     try:
-        # 1. Fetch data from Supabase
-        print("Fetching prices from Supabase...")
+        # 1. Fetch data from Database
+        print("Fetching prices from PostgreSQL...")
         prices = fetch_masi_prices()
         
         # 2. Process data
@@ -26,6 +26,7 @@ def main():
     except Exception as e:
         print(f"\nError: {e}")
         print("\nSuggestions:")
+        print("- Ensure your Docker container is running: docker-compose up -d")
         print("- Ensure your .env file has valid credentials.")
         print("- Ensure the 'masi_prices' table exists and contains data.")
         print("- Run 'python src/scraper.py' if the table is empty.")

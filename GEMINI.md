@@ -6,42 +6,35 @@ This project provides a quantitative framework for estimating the fundamental va
 
 The project is structured for modularity and scalability:
 
-- **`main.py`**: The primary entry point. Coordinates fetching data from Supabase and applying signal processing.
+- **`main.py`**: The primary entry point. Coordinates fetching data from the database and applying signal processing.
 - **`src/`**: Core package containing project logic.
-  - `db_client.py`: Manages Supabase authentication and data I/O (fetching and uploading).
+  - `db_client.py`: Manages PostgreSQL connections and data I/O using SQLAlchemy.
   - `scraper.py`: Utility to fetch historical MASI data (`MASI.CS`) from Yahoo Finance.
   - `signal_processing.py`: Implementation of the HP-filter and trend extraction.
 - **`biblio/`**: Research papers and documentation.
-  - `explanation/`: Contains `explanation.tex` and `explanation.pdf` for a deep dive into the methodology.
+- **`docker-compose.yml`**: Defines the local PostgreSQL database service.
 
 ## 🚀 Getting Started
 
 ### 1. Environment Setup
 Install the required dependencies:
 ```bash
-pip install supabase statsmodels yfinance pandas python-dotenv
+pip install sqlalchemy psycopg2-binary statsmodels yfinance pandas python-dotenv
 ```
 
-Create a `.env` file in the root directory with your Supabase credentials:
-```env
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_KEY=your-service-role-key
+### 2. Launch Database (Docker)
+Ensure Docker is installed and running, then start the database:
+```bash
+docker-compose up -d
 ```
-
-### 2. Database Initialization
-Run the following SQL in your Supabase Editor to create the necessary table:
-```sql
-CREATE TABLE masi_prices (
-    date DATE PRIMARY KEY,
-    close FLOAT8 NOT NULL
-);
-```
+This will start a PostgreSQL instance on `localhost:5432`.
 
 ### 3. Data Acquisition
-Populate your database with historical MASI data:
+Populate your database with historical MASI prices:
 ```bash
 python src/scraper.py
 ```
+*Note: The script will automatically create the `masi_prices` table on its first run.*
 
 ### 4. Running the Analysis
 Estimate the fundamental value from your stored data:
@@ -49,13 +42,13 @@ Estimate the fundamental value from your stored data:
 python main.py
 ```
 
-## 📈 Methodology
+## 📊 Methodology
 
 ### Fundamental Value Proxy
-The project uses the **Hodrick-Prescott (HP) filter** to decompose the observed MASI price ($p_t$) into a trend component ($p_t^f$, interpreted as the fundamental value) and a cyclical component. The default smoothing parameter is $\lambda = 129,600$ for daily data.
+The project uses the **Hodrick-Prescott (HP) filter** to decompose the observed MASI price into a trend component ($p_t^f$, interpreted as the fundamental value).
 
 ### Theoretical Context
-This implementation supports the **Chen et al. (2-type)** agent-based framework, which analyzes market dynamics through the interaction of Fundamentalists and Chartists.
+Supports the **Chen et al. (2-type)** agent-based framework (Fundamentalists vs. Chartists).
 
 ---
-*Note: Ensure you have a stable internet connection for Supabase and yfinance operations.*
+*Note: Credentials can be configured in the `.env` file.*

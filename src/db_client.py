@@ -1,29 +1,27 @@
-"""Supabase data ingestion helpers for MASI historical prices.
+"""Database ingestion helpers for MASI historical prices using PostgreSQL.
 
 Expected environment variables:
-    SUPABASE_URL
-    SUPABASE_KEY
+    DB_USER
+    DB_PASSWORD
+    DB_HOST
+    DB_PORT
+    DB_NAME
 
-The table and column names are configurable through function arguments so this
-module can work with your current warehouse schema without code changes.
+The table and column names are configurable through function arguments.
 """
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping
 
 import pandas as pd
 from dotenv import load_dotenv
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
 
 load_dotenv()
-
-if TYPE_CHECKING:
-    from supabase import Client
-else:
-    Client = Any
-
 
 DEFAULT_DATE_COLUMN = "date"
 DEFAULT_CLOSE_COLUMN = "close"
@@ -35,48 +33,39 @@ class DataIngestionError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class SupabaseSettings:
-    """Connection settings for a Supabase project."""
+class DatabaseSettings:
+    """Connection settings for a PostgreSQL database."""
 
-    url: str
-    key: str
+    user: str
+    password: str
+    host: str
+    port: str
+    name: str
 
     @classmethod
-    def from_env(cls) -> "SupabaseSettings":
-        """Load Supabase credentials from environment variables."""
-        url = os.getenv("SUPABASE_URL")
-        key = os.getenv("SUPABASE_KEY")
+    def from_env(cls) -> "DatabaseSettings":
+        """Load database credentials from environment variables."""
+        user = os.getenv("DB_USER", "postgres")
+        password = os.getenv("DB_PASSWORD", "postgres")
+        host = os.getenv("DB_HOST", "localhost")
+        port = os.getenv("DB_PORT", "5432")
+        name = os.getenv("DB_NAME", "masi_db")
 
-        missing = [
-            name
-            for name, value in (("SUPABASE_URL", url), ("SUPABASE_KEY", key))
-            if not value
-        ]
-        if missing:
-            raise DataIngestionError(
-                "Missing Supabase environment variable(s): "
-                + ", ".join(missing)
-                + "."
-            )
+        return cls(user=user, password=password, host=host, port=port, name=name)
 
-        return cls(url=str(url), key=str(key))
+    @property
+    def url(self) -> str:
+        """Construct a SQLAlchemy database URL."""
+        return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.name}"
 
 
-def get_supabase_client(settings: SupabaseSettings | None = None) -> Client:
-    """Create a Supabase client from explicit settings or environment vars."""
-    resolved_settings = settings or SupabaseSettings.from_env()
-
+def get_db_engine(settings: DatabaseSettings | None = None) -> Engine:
+    """Create a SQLAlchemy engine from explicit settings or environment vars."""
+    resolved_settings = settings or DatabaseSettings.from_env()
     try:
-        from supabase import create_client
-
-        return create_client(resolved_settings.url, resolved_settings.key)
-    except ImportError as exc:
-        raise DataIngestionError(
-            "The 'supabase' package is required. Install it with: "
-            "python -m pip install supabase"
-        ) from exc
-    except Exception as exc:  # pragma: no cover - depends on external client
-        raise DataIngestionError("Failed to create Supabase client.") from exc
+        return create_engine(resolved_settings.url)
+    except Exception as exc:
+        raise DataIngestionError(f"Failed to create database engine: {exc}")
 
 
 def fetch_masi_prices(
@@ -84,70 +73,58 @@ def fetch_masi_prices(
     table_name: str = DEFAULT_TABLE_NAME,
     date_column: str = DEFAULT_DATE_COLUMN,
     close_column: str = DEFAULT_CLOSE_COLUMN,
-    client: Client | None = None,
+    engine: Engine | None = None,
     start_date: str | pd.Timestamp | None = None,
     end_date: str | pd.Timestamp | None = None,
-    page_size: int = 1_000,
 ) -> pd.DataFrame:
-    """Fetch daily MASI closing prices from Supabase.
+    """Fetch daily MASI closing prices from PostgreSQL.
 
     Parameters
     ----------
     table_name:
-        Supabase table containing historical MASI observations.
+        Database table containing historical MASI observations.
     date_column:
         Name of the date column in ``table_name``.
     close_column:
         Name of the closing-price column in ``table_name``.
-    client:
-        Optional preconfigured Supabase client. If omitted, credentials are read
-        from ``SUPABASE_URL`` and ``SUPABASE_KEY``.
+    engine:
+        Optional preconfigured SQLAlchemy engine.
     start_date, end_date:
         Optional inclusive date filters.
-    page_size:
-        Number of rows per Supabase request. Pagination is handled internally.
 
     Returns
     -------
     pandas.DataFrame
         Clean DataFrame indexed by date with one float column named ``close``.
     """
-    if page_size <= 0:
-        raise ValueError("page_size must be a positive integer.")
+    db_engine = engine or get_db_engine()
+    
+    query = f"SELECT {date_column}, {close_column} FROM {table_name}"
+    conditions = []
+    params = {}
 
-    supabase = client or get_supabase_client()
-    selected_columns = f"{date_column},{close_column}"
-    rows: list[Mapping[str, Any]] = []
-    offset = 0
+    if start_date is not None:
+        conditions.append(f"{date_column} >= :start_date")
+        params["start_date"] = pd.Timestamp(start_date).date()
+    if end_date is not None:
+        conditions.append(f"{date_column} <= :end_date")
+        params["end_date"] = pd.Timestamp(end_date).date()
+
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+    
+    query += f" ORDER BY {date_column} ASC"
 
     try:
-        while True:
-            query = (
-                supabase.table(table_name)
-                .select(selected_columns)
-                .order(date_column, desc=False)
-                .range(offset, offset + page_size - 1)
-            )
-
-            if start_date is not None:
-                query = query.gte(date_column, _format_date_filter(start_date))
-            if end_date is not None:
-                query = query.lte(date_column, _format_date_filter(end_date))
-
-            response = query.execute()
-            batch = response.data or []
-            rows.extend(batch)
-
-            if len(batch) < page_size:
-                break
-            offset += page_size
-    except Exception as exc:  # pragma: no cover - depends on network/db state
+        with db_engine.connect() as conn:
+            df = pd.read_sql(text(query), conn, params=params)
+    except Exception as exc:
         raise DataIngestionError(
-            f"Failed to fetch MASI prices from Supabase table '{table_name}'."
-        ) from exc
+            f"Failed to fetch MASI prices from table '{table_name}': {exc}"
+        )
 
     return clean_price_frame(
-        rows,
+        df,
         date_column=date_column,
         close_column=close_column,
     )
@@ -206,45 +183,41 @@ def upload_masi_prices(
     df: pd.DataFrame,
     *,
     table_name: str = DEFAULT_TABLE_NAME,
-    client: Client | None = None,
+    engine: Engine | None = None,
 ) -> None:
-    """Upload MASI price records to Supabase.
+    """Upload MASI price records to PostgreSQL.
 
     Parameters
     ----------
     df:
         DataFrame containing at least a 'close' column and a date index.
     table_name:
-        Target Supabase table.
-    client:
-        Optional preconfigured Supabase client.
+        Target database table.
+    engine:
+        Optional preconfigured SQLAlchemy engine.
     """
     if df.empty:
         return
 
-    supabase = client or get_supabase_client()
+    db_engine = engine or get_db_engine()
     
-    # Prepare records for Supabase (list of dicts)
+    # Prepare records for PostgreSQL
     records = df.reset_index().copy()
-    records["date"] = records["date"].dt.strftime("%Y-%m-%d")
-    data = records.to_dict(orient="records")
+    records["date"] = pd.to_datetime(records["date"]).dt.date
 
     try:
-        # Using upsert to handle duplicates if the table has a unique constraint on date
-        supabase.table(table_name).upsert(data).execute()
+        with db_engine.connect() as conn:
+            # Create table if it doesn't exist, otherwise append
+            records.to_sql(table_name, conn, if_exists="append", index=False)
+            # Optional: Add primary key/unique constraint if needed here
     except Exception as exc:
         raise DataIngestionError(f"Failed to upload data to '{table_name}': {exc}")
 
 
-def _format_date_filter(value: str | pd.Timestamp) -> str:
-    """Format dates for Supabase/PostgREST filters."""
-    timestamp = pd.Timestamp(value)
-    if pd.isna(timestamp):
-        raise ValueError(f"Invalid date filter value: {value!r}")
-    return timestamp.date().isoformat()
-
-
 if __name__ == "__main__":
-    prices = fetch_masi_prices()
-    print(prices.head())
-    print(f"Fetched {len(prices):,} MASI observations.")
+    try:
+        prices = fetch_masi_prices()
+        print(prices.head())
+        print(f"Fetched {len(prices):,} MASI observations.")
+    except Exception as e:
+        print(f"Database error: {e}")

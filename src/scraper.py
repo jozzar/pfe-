@@ -7,6 +7,7 @@ import yfinance as yf
 import pandas as pd
 import sys
 import os
+import requests
 
 # Ensure the root directory is in sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -18,15 +19,26 @@ MASI_TICKER = "MASI.CS"
 def scrape_masi_data(period: str = "max") -> pd.DataFrame:
     """Fetch historical MASI data from Yahoo Finance."""
     print(f"Fetching historical data for {MASI_TICKER}...")
-    ticker = yf.Ticker(MASI_TICKER)
+    
+    # Use a custom session with a User-Agent to reduce rate-limiting
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    })
+    
+    ticker = yf.Ticker(MASI_TICKER, session=session)
     df = ticker.history(period=period)
     
     if df.empty:
-        raise DataIngestionError(f"No data found for {MASI_TICKER}. You might be rate-limited by Yahoo Finance. Try again later.")
+        raise DataIngestionError(
+            f"No data found for {MASI_TICKER}. Yahoo Finance might be rate-limiting. "
+            "Try a shorter period (e.g., '10y', '5y') or check your internet connection."
+        )
     
-    df = df[["Close"]].copy()
-    df.index.name = "date"
-    df.rename(columns={"Close": "close"}, inplace=True)
+    # Map Yahoo Finance names to what db_client defaults expect
+    df = df[["Close", "Volume"]].copy()
+    df.index.name = "trade_date"
+    df.rename(columns={"Close": "closing_price", "Volume": "trading_volume"}, inplace=True)
     
     print(f"Successfully fetched {len(df)} records.")
     return df

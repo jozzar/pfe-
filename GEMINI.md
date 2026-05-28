@@ -29,14 +29,20 @@ docker-compose up -d
 ```
 This will start a PostgreSQL instance on `localhost:5432`.
 
-### 3. Data Acquisition
+### 3. Initialize Tables
+Create the required database schema:
+```bash
+python src/setup_tables.py
+```
+
+### 4. Data Acquisition
 Populate your database with historical MASI prices:
 ```bash
 python src/scraper.py
 ```
-*Note: The script will automatically create the `masi_prices` table on its first run.*
 
-### 4. Running the Analysis
+
+### 5. Running the Analysis
 Estimate the fundamental value from your stored data:
 ```bash
 python main.py

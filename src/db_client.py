@@ -23,9 +23,10 @@ from sqlalchemy.engine import Engine
 
 load_dotenv()
 
-DEFAULT_DATE_COLUMN = "date"
-DEFAULT_CLOSE_COLUMN = "close"
-DEFAULT_TABLE_NAME = "masi_prices"
+DEFAULT_DATE_COLUMN = "trade_date"
+DEFAULT_CLOSE_COLUMN = "closing_price"
+DEFAULT_VOLUME_COLUMN = "trading_volume"
+DEFAULT_TABLE_NAME = "masi_daily"
 
 
 class DataIngestionError(RuntimeError):
@@ -73,6 +74,7 @@ def fetch_masi_prices(
     table_name: str = DEFAULT_TABLE_NAME,
     date_column: str = DEFAULT_DATE_COLUMN,
     close_column: str = DEFAULT_CLOSE_COLUMN,
+    volume_column: str = DEFAULT_VOLUME_COLUMN,
     engine: Engine | None = None,
     start_date: str | pd.Timestamp | None = None,
     end_date: str | pd.Timestamp | None = None,
@@ -87,6 +89,8 @@ def fetch_masi_prices(
         Name of the date column in ``table_name``.
     close_column:
         Name of the closing-price column in ``table_name``.
+    volume_column:
+        Name of the volume column in ``table_name``.
     engine:
         Optional preconfigured SQLAlchemy engine.
     start_date, end_date:
@@ -95,11 +99,11 @@ def fetch_masi_prices(
     Returns
     -------
     pandas.DataFrame
-        Clean DataFrame indexed by date with one float column named ``close``.
+        Clean DataFrame indexed by date with columns named ``close`` and ``volume``.
     """
     db_engine = engine or get_db_engine()
     
-    query = f"SELECT {date_column}, {close_column} FROM {table_name}"
+    query = f"SELECT {date_column}, {close_column}, {volume_column} FROM {table_name}"
     conditions = []
     params = {}
 
@@ -127,6 +131,7 @@ def fetch_masi_prices(
         df,
         date_column=date_column,
         close_column=close_column,
+        volume_column=volume_column,
     )
 
 
@@ -135,6 +140,7 @@ def clean_price_frame(
     *,
     date_column: str = DEFAULT_DATE_COLUMN,
     close_column: str = DEFAULT_CLOSE_COLUMN,
+    volume_column: str | None = DEFAULT_VOLUME_COLUMN,
 ) -> pd.DataFrame:
     """Validate and standardize raw MASI records into a modelling DataFrame."""
     df = records.copy() if isinstance(records, pd.DataFrame) else pd.DataFrame(records)
@@ -151,14 +157,21 @@ def clean_price_frame(
             + "."
         )
 
-    clean_df = df.loc[:, [date_column, close_column]].copy()
-    clean_df.rename(
-        columns={date_column: "date", close_column: "close"},
-        inplace=True,
-    )
+    cols_to_keep = [date_column, close_column]
+    rename_map = {date_column: "date", close_column: "close"}
+    
+    if volume_column and volume_column in df.columns:
+        cols_to_keep.append(volume_column)
+        rename_map[volume_column] = "volume"
+
+    clean_df = df.loc[:, cols_to_keep].copy()
+    clean_df.rename(columns=rename_map, inplace=True)
 
     clean_df["date"] = pd.to_datetime(clean_df["date"], errors="coerce")
     clean_df["close"] = pd.to_numeric(clean_df["close"], errors="coerce")
+    if "volume" in clean_df.columns:
+        clean_df["volume"] = pd.to_numeric(clean_df["volume"], errors="coerce")
+
     clean_df.dropna(subset=["date", "close"], inplace=True)
 
     if clean_df.empty:
@@ -176,13 +189,19 @@ def clean_price_frame(
             "At least 3 valid MASI observations are required for time-series work."
         )
 
-    return clean_df.astype({"close": "float64"})
+    types = {"close": "float64"}
+    if "volume" in clean_df.columns:
+        types["volume"] = "Int64"  # Nullable integer
+    return clean_df.astype(types)
 
 
 def upload_masi_prices(
     df: pd.DataFrame,
     *,
     table_name: str = DEFAULT_TABLE_NAME,
+    date_column: str = DEFAULT_DATE_COLUMN,
+    close_column: str = DEFAULT_CLOSE_COLUMN,
+    volume_column: str = DEFAULT_VOLUME_COLUMN,
     engine: Engine | None = None,
 ) -> None:
     """Upload MASI price records to PostgreSQL.
@@ -193,6 +212,12 @@ def upload_masi_prices(
         DataFrame containing at least a 'close' column and a date index.
     table_name:
         Target database table.
+    date_column:
+        Name of the date column in the target table.
+    close_column:
+        Name of the closing-price column in the target table.
+    volume_column:
+        Name of the volume column in the target table.
     engine:
         Optional preconfigured SQLAlchemy engine.
     """
@@ -204,12 +229,18 @@ def upload_masi_prices(
     # Prepare records for PostgreSQL
     records = df.reset_index().copy()
     records["date"] = pd.to_datetime(records["date"]).dt.date
+    
+    # Rename internal names back to database names
+    rename_map = {"date": date_column, "close": close_column}
+    if "volume" in records.columns:
+        rename_map["volume"] = volume_column
+        
+    records.rename(columns=rename_map, inplace=True)
 
     try:
         with db_engine.connect() as conn:
-            # Create table if it doesn't exist, otherwise append
+            # Append data to the existing table
             records.to_sql(table_name, conn, if_exists="append", index=False)
-            # Optional: Add primary key/unique constraint if needed here
     except Exception as exc:
         raise DataIngestionError(f"Failed to upload data to '{table_name}': {exc}")
 

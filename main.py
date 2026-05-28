@@ -28,7 +28,7 @@ def main():
         print("\nSuggestions:")
         print("- Ensure your Docker container is running: docker-compose up -d")
         print("- Ensure your .env file has valid credentials.")
-        print("- Ensure the 'masi_prices' table exists and contains data.")
+        print("- Ensure the 'masi_daily' table exists and contains data.")
         print("- Run 'python src/scraper.py' if the table is empty.")
 
 if __name__ == "__main__":

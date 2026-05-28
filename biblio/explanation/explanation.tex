@@ -1,0 +1,46 @@
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath}
+\usepackage{hyperref}
+
+\title{MASI Fundamental Value Estimation and Agent-Based Modeling}
+\author{PFE Finance Project}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section{Project Overview}
+This project focuses on the estimation of the fundamental value of the Moroccan All Shares Index (MASI) through a combination of econometrics, signal processing, and agent-based modeling (ABM). The goal is to provide a quantitative framework for analyzing market trends and understanding the behavior of heterogeneous agents in the Moroccan stock market.
+
+\section{Technical Implementation}
+The project's codebase is designed for modularity and scalability:
+
+\subsection{Data Acquisition (\texttt{db\_client.py})}
+Historical MASI prices are retrieved from a Supabase backend. The ingestion pipeline includes:
+\begin{itemize}
+    \item Secure connection management using environment variables.
+    \item Automated pagination and date-based filtering.
+    \item Data validation and cleaning, ensuring a standardized Pandas DataFrame for downstream analysis.
+\end{itemize}
+
+\subsection{Fundamental Value Estimation (\texttt{signal\_processing.py})}
+To proxy the unobserved fundamental price ($p_t^f$), the project employs the Hodrick-Prescott (HP) filter. This allows for the decomposition of observed prices into:
+\begin{itemize}
+    \item \textbf{Trend Component:} Interpreted as the fundamental value, smoothed to reflect long-term market drivers.
+    \item \textbf{Cyclical Component:} Capturing short-term deviations and noise.
+\end{itemize}
+The implementation defaults to a smoothing parameter $\lambda = 129,600$ for daily observations, consistent with standard econometric practices.
+
+\section{Theoretical Framework}
+The project is grounded in the literature on Agent-Based Computational Economics (ACE). It specifically references the Chen et al. 2-type framework, which models market dynamics through the interaction of:
+\begin{itemize}
+    \item \textbf{Fundamentalists:} Agents who trade based on the perceived gap between the market price and the fundamental value.
+    \item \textbf{Chartists (Trend Followers):} Agents who extrapolate past price movements.
+\end{itemize}
+
+Relevant research papers included in the project bibliography cover topics such as evaluating fundamental values in agent-based models and the integration of econometrics with ABM.
+
+\end{document}
